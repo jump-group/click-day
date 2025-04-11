@@ -110,6 +110,10 @@
 
     function navigateTo(url) {
         customLog('Navigo a:', url);
+        // Imposta un flag in sessionStorage se stiamo navigando alla pagina di dettaglio
+        if (url.toLowerCase() === targetDetailPageUrl.toLowerCase()) {
+            sessionStorage.setItem('fesrNavAttempt', 'true');
+        }
         window.location.href = url;
     }
 
@@ -155,19 +159,34 @@
         const baseUrlLower = baseUrl.toLowerCase();
         const targetDetailPageUrlLower = targetDetailPageUrl.toLowerCase();
 
-        if (currentUrlLower.startsWith(baseUrlLower) && currentUrlLower !== targetDetailPageUrlLower) {
-            customLog('Reindirizzo alla pagina di dettaglio:', targetDetailPageUrl);
-            navigateTo(targetDetailPageUrl);
-            return; // Impedisce ulteriori esecuzioni di handleInitialLoad in questo ciclo
-        } else if (currentUrlLower === targetDetailPageUrlLower) {
+        // Controlla se è stato appena tentato un reindirizzamento alla pagina dettaglio
+        const navigationAttempt = sessionStorage.getItem('fesrNavAttempt');
+        if (navigationAttempt === 'true') {
+            sessionStorage.removeItem('fesrNavAttempt'); // Rimuovi il flag dopo averlo letto
+            // Se il tentativo è stato fatto ma siamo sulla baseUrl, c'è stato un redirect inaspettato
             if (currentUrlLower === baseUrlLower) {
-                customLog('Redirezione inaspettata verso la base URL. Script fermato.');
+                customLog('Redirezione inaspettata alla base URL rilevata dopo tentativo di navigazione alla pagina dettaglio. Script fermato.');
                 stopScript();
-            } else {
-                customLog('Nessuna redirezione inaspettata. Procedo con la ricerca del bottone.');
-                checkAndNavigateButton();
+                return; // Interrompi l'esecuzione per questo caricamento
             }
-        } else if (!currentUrlLower.startsWith(baseUrlLower)) {
+            // Altrimenti, la navigazione potrebbe essere andata a buon fine o essere finita altrove,
+            // lascia che la logica sottostante gestisca la situazione corrente.
+        }
+
+        // Logica principale di gestione URL
+        if (currentUrlLower.startsWith(baseUrlLower)) {
+            // Siamo sul dominio corretto
+            if (currentUrlLower === targetDetailPageUrlLower) {
+                // Siamo sulla pagina di dettaglio corretta, cerca il bottone
+                customLog('Nella pagina di dettaglio corretta. Cerco il bottone...');
+                checkAndNavigateButton();
+            } else {
+                // Siamo sul dominio corretto ma non sulla pagina di dettaglio, reindirizza
+                customLog('Non nella pagina di dettaglio. Reindirizzo a:', targetDetailPageUrl);
+                navigateTo(targetDetailPageUrl); // La funzione navigateTo imposterà il flag
+            }
+        } else {
+            // Dominio non corretto
             customLog('Dominio non corretto. Script non attivo su questa pagina.');
         }
     }
