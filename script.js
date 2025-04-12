@@ -19,8 +19,11 @@
     const baseUrl = 'https://servizifederati.regione.emilia-Romagna.it/fesr2020/';
     const storageKeyActive = 'fesrAutomationActive';
     const storageKeyLogs = 'fesrAutomationLogs';
+    const storageKeyReloadCount = 'fesrAutomationReloadCount'; // Chiave per il contatore ricaricamenti
+    const maxReload = 5; // Numero massimo di ricaricamenti consentiti
 
     let scriptAttivo = true; // Variabile per controllare se lo script è attivo (inizialmente attivo)
+    let reloadCount = 0; // Contatore per i ricaricamenti
     let uiContainer;
     let notificationDiv;
     let logDiv;
@@ -42,6 +45,26 @@
     function saveScriptState() {
         localStorage.setItem(storageKeyActive, scriptAttivo);
         customLog('Stato script salvato:', scriptAttivo);
+    }
+
+    // --- GESTIONE DELLO STORAGE PER IL CONTATORE RICARICAMENTI ---
+    function loadReloadCount() {
+        const storedCount = localStorage.getItem(storageKeyReloadCount);
+        if (storedCount !== null) {
+            reloadCount = parseInt(storedCount, 10) || 0;
+        }
+        customLog(`Contatore ricaricamenti caricato: ${reloadCount}/${maxReload}`);
+    }
+
+    function saveReloadCount() {
+        localStorage.setItem(storageKeyReloadCount, reloadCount.toString());
+        customLog(`Contatore ricaricamenti salvato: ${reloadCount}`);
+    }
+
+    function resetReloadCount() {
+        reloadCount = 0;
+        saveReloadCount();
+        customLog('Contatore ricaricamenti azzerato.');
     }
 
     // --- GESTIONE DELLO STORAGE PER I LOG ---
@@ -86,6 +109,7 @@
         displayNotification('Script fermato.');
         updateStopButtonText();
         saveScriptState();
+        resetReloadCount(); // Azzera il contatore quando lo script si ferma
     }
 
     function startScript() {
@@ -95,6 +119,7 @@
         updateStopButtonText();
         saveScriptState();
         clearLogs(); // Azzera i log quando si riavvia lo script
+        resetReloadCount(); // Azzera anche il contatore ricaricamenti
         handleInitialLoad(); // Riavvia la logica principale dello script
     }
 
@@ -143,11 +168,21 @@
         if (foundButton) {
             const targetUrl = foundButton.getAttribute('href');
             customLog('Bottone trovato. Navigo a:', targetUrl);
+            resetReloadCount(); // Azzera il contatore prima di navigare con successo
             navigateTo(targetUrl);
             stopScript(); // Ferma lo script dopo aver raggiunto lo scopo
         } else {
-            customLog('Bottone non trovato. Ricarico la pagina.');
-            reloadPage();
+            reloadCount++;
+            saveReloadCount();
+            if (reloadCount > maxReload) {
+                customLog(`Numero massimo di ricaricamenti (${maxReload}) raggiunto. Script fermato.`);
+                displayNotification(`Max ricaricamenti (${maxReload}) raggiunto. Script fermato.`);
+                resetReloadCount(); // Azzera per il futuro
+                stopScript(); // Ferma lo script
+            } else {
+                customLog(`Bottone non trovato. Ricarico la pagina (Tentativo ${reloadCount}/${maxReload}).`);
+                reloadPage();
+            }
         }
     }
 
@@ -256,8 +291,8 @@
     }
 
     // --- AVVIO SCRIPT ---
-    customLog('Script Tampermonkey avviato.');
     loadScriptState(); // Carica lo stato dello script dallo storage
+    loadReloadCount(); // Carica il contatore dei ricaricamenti
     loadLogs();      // Carica i log dallo storage
     createUI();      // Crea l'interfaccia utente
     handleInitialLoad(); // Avvia la logica principale all'avvio
