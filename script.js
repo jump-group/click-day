@@ -49,7 +49,8 @@
         const storedLogs = localStorage.getItem(storageKeyLogs);
         if (storedLogs) {
             logs = JSON.parse(storedLogs);
-            displayLogsInUI();
+            // Non chiamiamo displayLogsInUI() qui, lo faremo dopo la creazione della UI
+            // displayLogsInUI();
         }
     }
 
@@ -66,12 +67,14 @@
     function displayLogsInUI() {
         if (logDiv) {
             logDiv.innerHTML = ''; // Pulisci il contenuto precedente
-            logs.forEach(log => {
+            // Itera sull'array dei log in ordine inverso
+            for (let i = logs.length - 1; i >= 0; i--) {
                 const logEntry = document.createElement('div');
-                logEntry.textContent = log;
+                logEntry.textContent = logs[i];
                 logDiv.appendChild(logEntry);
-            });
-            logDiv.scrollTop = logDiv.scrollHeight;
+            }
+            // Non serve più scrollare in basso, i nuovi log sono in alto
+            // logDiv.scrollTop = logDiv.scrollHeight;
         }
     }
 
@@ -230,8 +233,15 @@
             uiContainer.appendChild(logDiv);
 
             document.body.appendChild(uiContainer);
+
+            // Mostra i log caricati ora che la UI è pronta
+            displayLogsInUI();
         } else {
-            document.addEventListener('DOMContentLoaded', createUI);
+            // Se il body non è pronto, assicurati che i log vengano mostrati quando lo sarà
+            document.addEventListener('DOMContentLoaded', () => {
+                createUI(); // Riprova a creare la UI
+                displayLogsInUI(); // Mostra i log dopo la creazione
+            });
         }
     }
 
