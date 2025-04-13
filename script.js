@@ -443,9 +443,31 @@
         if (navAttempt === 'true') {
             sessionStorage.removeItem('fesrNavAttempt');
             if (currentUrlLower === baseUrlLower) {
-                customLog('Redirect inaspettato alla base URL rilevato dopo tentativo di navigazione alla pagina dettaglio.');
-                startSelezioneSoggettoFlow();
-                return;
+                // Siamo stati reindirizzati alla baseUrl dopo aver tentato di andare alla pagina dettaglio
+                customLog('Redirect inaspettato alla base URL rilevato.');
+                // Controlla SE è presente l'alert specifico "Soggetto non valido"
+                const dangerAlert = document.querySelector('div.alert.alert-danger');
+                if (dangerAlert && dangerAlert.textContent.trim().includes('Soggetto non valido')) {
+                    // Alert specifico trovato -> Avvia flusso selezione soggetto
+                    customLog("Trovato alert 'Soggetto non valido'. Avvio flusso alternativo: Selezione Soggetto.");
+                    startSelezioneSoggettoFlow();
+                } else {
+                    // Redirect alla base URL, MA senza l'alert specifico
+                    // Consideralo un fallimento nel raggiungere la pagina dettaglio e ritenta.
+                    customLog("Redirect alla base URL senza alert 'Soggetto non valido'. Ritento navigazione a pagina dettaglio.");
+                    reloadCount++;
+                    saveReloadCount();
+                    updateReloadCounterUI();
+                    if (reloadCount > maxReloads) {
+                        customLog(`Numero massimo di tentativi (${maxReloads}) raggiunto per accedere alla pagina dettaglio. Script fermato.`);
+                        displayNotification(`Max tentativi (${maxReloads}) accesso dettaglio raggiunto. Script fermato.`);
+                        stopScript();
+                    } else {
+                        customLog(`Ritento accesso pagina dettaglio (Tentativo ${reloadCount}/${maxReloads}).`);
+                        navigateTo(targetDetailPageUrl);
+                    }
+                }
+                return; // Esce da handleInitialLoad dopo aver gestito il redirect
             }
             customLog('Tentativo navigazione pagina dettaglio registrato, ma non sono sulla base URL.');
         }
