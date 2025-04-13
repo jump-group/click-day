@@ -51,7 +51,7 @@
         if (msUntilActivation > 0) {
             // Siamo prima dell'ora di attivazione
             if (storedState === 'true') {
-                // L'utente ha attivato manualmente prima dell'ora in una sessione precedente
+                // L'utente ha attivato manualmente prima dell'ora programmata
                 scriptAttivo = true;
                 customLog("Stato attivato manualmente (prima dell'ora programmata) caricato da localStorage.");
                 // Non impostare timer, l'attivazione manuale ha la precedenza
@@ -296,25 +296,23 @@
         if (foundButton) {
             const targetUrl = foundButton.getAttribute('href');
             customLog('Bottone trovato. Navigo a:', targetUrl);
-            resetReloadCount();
+            // resetReloadCount(); // NON resettare qui, altrimenti il loop incerto non incrementa
             // Imposta il flag di tentativo invio prima di navigare
             sessionStorage.setItem('fesrSubmitAttempt', 'true');
             customLog('Flag fesrSubmitAttempt impostato.');
             navigateTo(targetUrl);
-            // Ferma lo script dopo aver iniziato la navigazione finale
-            stopScript();
         } else {
+            // Questo blocco viene eseguito solo se il BOTTONE non viene trovato
+            customLog(`Bottone ${searchText} NON trovato sulla pagina dettaglio.`);
             reloadCount++;
-            // saveReloadCount(); // saveReloadCount viene già chiamato da reset/load/incremento
-            updateReloadCounterUI(); // Aggiorna subito UI dopo incremento
+            saveReloadCount(); // Salva subito dopo l'incremento
+            updateReloadCounterUI();
             if (reloadCount > maxReloads) {
-                customLog(`Numero massimo di ricaricamenti (${maxReloads}) raggiunto sulla pagina dettaglio. Flusso alternativo fallito o bottone non trovato. Script fermato.`);
+                customLog(`Numero massimo di ricaricamenti (${maxReloads}) raggiunto senza trovare il bottone. Script fermato.`);
                 displayNotification(`Max ricaricamenti (${maxReloads}) raggiunto. Script fermato.`);
                 stopScript(); // Ferma lo script
             } else {
-                customLog(`Bottone non trovato sulla pagina dettaglio. Ricarico (Tentativo ${reloadCount}/${maxReloads}).`);
-                // Salva il contatore prima di ricaricare
-                saveReloadCount();
+                customLog(`Ricarico per cercare ancora il bottone (Tentativo ${reloadCount}/${maxReloads}).`);
                 reloadPage();
             }
         }
@@ -348,9 +346,9 @@
 
         for (const row of tableRows) {
             const cells = row.querySelectorAll('td');
-            if (cells.length >= 4) { // Assicurati che ci siano abbastanza celle
-                const cfCell = cells[2]; // Terza cella per Codice Fiscale
-                const actionCell = cells[3]; // Quarta cella per Azioni
+            if (cells.length >= 4) {
+                const cfCell = cells[2];
+                const actionCell = cells[3];
                 const linkElement = actionCell.querySelector('a.btn');
 
                 if (cfCell && cfCell.textContent.trim() === fiscalCode && linkElement) {
@@ -358,23 +356,21 @@
                     foundRow = true;
                     const relativeUrl = linkElement.getAttribute('href');
                     if (relativeUrl) {
-                        // Costruisci l'URL completo usando il costruttore URL per la corretta risoluzione
-                        // const fullUrl = (baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl) + relativeUrl;
                         const fullUrl = new URL(relativeUrl, baseUrl).href;
                         customLog(`URL estratto: ${relativeUrl}, URL completo calcolato: ${fullUrl}`);
 
-                        // Salva nella mappa e naviga
                         const cfUrlMap = getCfUrlMap();
                         cfUrlMap[fiscalCode] = fullUrl;
                         saveCfUrlMap(cfUrlMap);
 
                         customLog(`URL salvato per CF ${fiscalCode}. Navigo a ${fullUrl}`);
+                        resetReloadCount(); // Azzera contatore dopo successo selezione
                         navigateTo(fullUrl);
                     } else {
                         customLog("Errore: Link trovato ma senza attributo href.");
                         stopScript();
                     }
-                    break; // Esci dal ciclo una volta trovata la riga
+                    break;
                 }
             }
         }
@@ -405,9 +401,8 @@
             sessionStorage.removeItem('fesrNavAttempt');
             if (currentUrlLower === baseUrlLower) {
                 customLog('Redirect inaspettato alla base URL rilevato dopo tentativo di navigazione alla pagina dettaglio.');
-                // Invece di fermare, avvia il flusso alternativo
                 startSelezioneSoggettoFlow();
-                return; // Interrompi l'esecuzione di handleInitialLoad per questo ciclo
+                return;
             }
             customLog('Tentativo navigazione pagina dettaglio registrato, ma non sono sulla base URL.');
         }
@@ -425,25 +420,18 @@
 
         // 2. Logica principale basata sull'URL corrente
         if (currentUrlLower.startsWith(baseUrlLower)) {
-            // Siamo sul dominio corretto
             if (currentUrlLower === targetDetailPageUrlLower) {
-                // Siamo sulla pagina di dettaglio corretta, cerca il bottone "Invia Domanda"
                 customLog('Nella pagina di dettaglio corretta. Cerco il bottone...');
                 checkAndNavigateButton();
             } else if (currentUrlLower === selezioneSoggettoUrlLower) {
-                // Siamo sulla pagina di selezione soggetto, processala
                 customLog('Nella pagina di Selezione Soggetto. Processo la tabella...');
                 processSelezioneSoggettoPage();
             } else {
-                // Siamo su un'altra pagina del dominio FESR (es. dopo selezione soggetto, o all'inizio)
-                // Tentiamo di andare alla pagina di dettaglio desiderata.
                 customLog(`Non sulla pagina dettaglio (${targetDetailPageUrlLower}) né sulla selezione soggetto (${selezioneSoggettoUrlLower}). Reindirizzo alla pagina dettaglio: ${targetDetailPageUrl}`);
                 navigateTo(targetDetailPageUrl);
             }
         } else {
-            // Dominio non corretto
             customLog('Dominio non corretto. Script non attivo su questa pagina.');
-            // Non fare nulla, lo script non deve operare qui
         }
         customLog('--- Fine handleInitialLoad ---');
     }
@@ -455,27 +443,69 @@
         const targetDetailPageUrlLower = targetDetailPageUrl.toLowerCase();
 
         if (submitAttempt === 'true') {
-            sessionStorage.removeItem('fesrSubmitAttempt'); // Rimuovi sempre il flag di tentativo
-            customLog('Flag fesrSubmitAttempt rilevato e rimosso.');
-            if (currentUrlLower === targetDetailPageUrlLower) {
-                customLog('INVIO CON SUCCESSO RILEVATO: Reindirizzamento alla pagina dettaglio dopo tentativo invio.');
+            sessionStorage.removeItem('fesrSubmitAttempt');
+            customLog('Flag fesrSubmitAttempt rilevato e rimosso. Controllo presenza div.alert.alert-success...');
+
+            const successAlert = document.querySelector('div.alert.alert-success');
+
+            if (successAlert) {
+                customLog('INVIO CON SUCCESSO CONFERMATO: Trovato div.alert.alert-success.');
                 localStorage.setItem(storageKeyScriptSubmitSuccess, 'true');
-                updateSubmitStatusUI(); // Aggiorna subito la UI
-                stopScript(); // Ferma definitivamente lo script
-                return true; // Indica che lo script deve fermarsi
+                resetReloadCount(); // Azzera contatore al successo
+                updateSubmitStatusUI();
+                stopScript();
+                return true;
             } else {
-                customLog('Tentativo invio rilevato, ma non reindirizzato alla pagina dettaglio. URL:', currentUrlLower);
+                customLog('Alert di successo (div.alert.alert-success) non trovato.');
+                if (currentUrlLower === targetDetailPageUrlLower) {
+                    customLog('Invio INCERTO: Reindirizzato a pagina dettaglio ma senza alert di successo.');
+                    displaySubmitWarningUI();
+                    // Incrementa e controlla il contatore nel caso incerto (trattato come un fallimento di ricerca bottone)
+                    reloadCount++;
+                    saveReloadCount(); // Salva subito
+                    updateReloadCounterUI(); // Aggiorna UI
+                    if (reloadCount > maxReloads) {
+                        customLog(`Numero massimo di tentativi (${maxReloads}) raggiunto dopo invio incerto. Script fermato.`);
+                        displayNotification(`Max tentativi (${maxReloads}) raggiunto. Script fermato.`);
+                        stopScript(); // Ferma lo script
+                        return true; // Indica di fermare l'avvio dello script
+                    } else {
+                        customLog(`Invio incerto. Procedo con tentativo ${reloadCount}/${maxReloads}.`);
+                        return false; // Lascia continuare lo script per il retry
+                    }
+                } else {
+                    customLog('Invio probabilmente fallito o navigato a pagina inaspettata. URL:', currentUrlLower);
+                    updateSubmitStatusUI();
+                    return false;
+                }
             }
         }
-        return false; // Indica che lo script può continuare (se attivo)
+        return false;
+    }
+
+    // Funzione specifica per mostrare l'avviso di invio incerto
+    function displaySubmitWarningUI() {
+        if (submitStatusDiv) {
+            submitStatusDiv.textContent = 'Invio incerto ⚠️';
+            submitStatusDiv.style.color = 'orange';
+            submitStatusDiv.style.fontWeight = 'bold';
+        }
     }
 
     function updateSubmitStatusUI() {
         if (submitStatusDiv) {
             const success = localStorage.getItem(storageKeyScriptSubmitSuccess) === 'true';
-            submitStatusDiv.textContent = success ? 'Invio effettuato ✅' : 'Stato invio: -';
-            submitStatusDiv.style.color = success ? 'green' : 'black';
-            submitStatusDiv.style.fontWeight = success ? 'bold' : 'normal';
+            if (success) {
+                submitStatusDiv.textContent = 'Invio effettuato ✅';
+                submitStatusDiv.style.color = 'green';
+                submitStatusDiv.style.fontWeight = 'bold';
+            } else {
+                // Mostra stato default se non c'è successo confermato
+                // L'avviso viene gestito da displaySubmitWarningUI
+                submitStatusDiv.textContent = 'Stato invio: -';
+                submitStatusDiv.style.color = 'black';
+                submitStatusDiv.style.fontWeight = 'normal';
+            }
         }
     }
 
@@ -667,6 +697,7 @@
     }
 
     // --- AVVIO SCRIPT ---
+    /* Vecchia logica rimossa:
     // Controllo successo invio PRIMA di tutto
     if (checkSubmitSuccess()) {
         customLog("Rilevato successo invio all'avvio, script fermato.");
@@ -683,19 +714,40 @@
         updateCountdownUI(); // Aggiorna anche countdown se necessario
         return;
     }
+    */
 
-    // Se non successo, carica stato (che gestirà attivazione/countdown)
-    loadScriptState();
+    // 1. Carica tutti gli stati necessari
+    loadScriptState(); // Determina lo stato attivo iniziale (considerando ora/manuale)
     loadReloadCount();
     loadLogs();
-    createUI();
 
-    // Avvia handleInitialLoad solo se lo script è già attivo ORA
-    // Se siamo prima dell'attivazione, handleInitialLoad verrà chiamato da activateScriptNow
+    // 2. Crea l'interfaccia utente
+    createUI(); // Assicura che gli elementi UI esistano
+
+    // 3. Aggiorna la UI con gli stati caricati
+    // Eseguiti qui per assicurare che createUI sia stata completata
+    displayLogsInUI();
+    updateStopButtonText();
+    updateReloadCounterUI();
+    updateSubmitStatusUI();
+    updateCountdownUI();
+
+    // 4. Controlla se l'ultima azione è stata un invio (con successo o incerto)
+    if (checkSubmitSuccess()) {
+        // Successo confermato: checkSubmitSuccess ha già fermato lo script e aggiornato la UI.
+        customLog("Rilevato successo invio confermato all'avvio. Script terminato.");
+        return; // Interrompi l'esecuzione qui.
+    } else {
+        // Nessun successo confermato. Se c'era incertezza, la UI è stata aggiornata da checkSubmitSuccess.
+        customLog("Controllo successo invio completato, nessun successo confermato rilevato.");
+    }
+
+    // 5. Esegui la logica principale solo se lo script è attualmente attivo
     if (scriptAttivo) {
+        customLog("Script attivo, avvio handleInitialLoad...");
         setTimeout(handleInitialLoad, 500);
     } else {
-        customLog("Script in attesa dell'attivazione programmata...");
+        customLog("Script non attivo (in attesa di attivazione o fermato manualmente).");
     }
 
 })();
