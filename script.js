@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Automazione FESR Emilia-Romagna
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  Automatizza alcune operazioni sul portale FESR, inclusa la selezione soggetto
+// @version      1.2
+// @description  Automatizza alcune operazioni sul portale FESR, inclusa la selezione soggetto e attivazione programmata
 // @author       Tu
 // @match        https://servizifederati.regione.emilia-Romagna.it/fesr2020/*
 // @grant        none
@@ -13,9 +13,9 @@
     'use strict';
 
     const fiscalCode = '04026360364'; // Codice Fiscale da cercare nella selezione soggetto
+    const requestId = '46317'; // ID della richiesta (costante modificabile)
 
     // --- CONFIGURAZIONE INIZIALE ---
-    const requestId = '46317'; // ID della richiesta (costante modificabile)
     let searchText = 'Invia domanda'; // Testo del bottone da cercare (modificabile)
     const targetDetailPageUrl = `https://servizifederati.regione.emilia-Romagna.it/fesr2020/richieste/common/${requestId}/dettaglio`;
     const baseUrl = 'https://servizifederati.regione.emilia-Romagna.it/fesr2020/';
@@ -26,32 +26,80 @@
     const storageKeyScriptSubmitSuccess = 'fesrSubmitSuccess'; // Chiave per stato invio successo
     const maxReloads = 5; // Numero massimo di ricaricamenti consentiti (Rinominata)
     const subjectSelectionUrl = 'https://servizifederati.regione.emilia-romagna.it/fesr2020/selezione_soggetto/richieste_elenco';
+    const activationDateTimeString = "2025-04-15T09:59:59.900"; // Formato ISO 8601
 
     let scriptAttivo = true;
     let reloadCount = 0;
+    let activationTimeoutId = null; // ID per il setTimeout di attivazione
+    let countdownIntervalId = null; // ID per l'interval del countdown
+    let activationTime = new Date(activationDateTimeString).getTime(); // Timestamp di attivazione
     let uiContainer;
     let notificationDiv;
     let logDiv;
     let logs = [];
     let reloadCounterSpan; // Aggiunta per riferimento allo span del contatore
     let submitStatusDiv; // Aggiunta per riferimento div stato invio
+    let countdownSpan; // Aggiunto per riferimento span countdown
 
     // --- GESTIONE DELLO STORAGE PER LO STATO ATTIVO ---
     function loadScriptState() {
+        customLog("loadScriptState: Controllo stato attivazione...");
+        const now = Date.now();
+        const msUntilActivation = activationTime - now;
         const storedState = localStorage.getItem(storageKeyScriptActive);
-        if (storedState !== null) {
-            scriptAttivo = storedState === 'true';
+
+        if (msUntilActivation > 0) {
+            // Siamo prima dell'ora di attivazione
+            if (storedState === 'true') {
+                // L'utente ha attivato manualmente prima dell'ora in una sessione precedente
+                scriptAttivo = true;
+                customLog("Stato attivato manualmente (prima dell'ora programmata) caricato da localStorage.");
+                // Non impostare timer, l'attivazione manuale ha la precedenza
+                if (activationTimeoutId) clearTimeout(activationTimeoutId); // Sicurezza
+                if (countdownIntervalId) clearInterval(countdownIntervalId); // Sicurezza
+                activationTimeoutId = null;
+                countdownIntervalId = null;
+            } else {
+                // Nessuna attivazione manuale precedente, attendi l'ora programmata
+                customLog(`Script in attesa. Attivazione programmata tra ${formatMilliseconds(msUntilActivation)}.`);
+                scriptAttivo = false;
+                saveScriptState(); // Forza lo stato inattivo
+                displayNotification(`Script in attesa. Attivazione tra ${formatMilliseconds(msUntilActivation)}`);
+
+                // Cancella eventuali timer precedenti (sicurezza)
+                if (activationTimeoutId) clearTimeout(activationTimeoutId);
+                if (countdownIntervalId) clearInterval(countdownIntervalId);
+
+                // Imposta il timer per l'attivazione
+                activationTimeoutId = setTimeout(activateScriptNow, msUntilActivation);
+
+                // Avvia l'aggiornamento del countdown nella UI
+                countdownIntervalId = setInterval(updateCountdownUI, 1000);
+            }
         } else {
-            scriptAttivo = true;
-            saveScriptState();
+            // Siamo dopo l'ora di attivazione o l'ora non è valida
+            if (activationTime && !isNaN(activationTime)) {
+                customLog("Ora di attivazione raggiunta o superata.");
+                // displayNotification("Ora di attivazione raggiunta."); // Meno notifiche
+            } else {
+                customLog("Data/ora di attivazione non valida, lo script usa lo stato salvato.");
+            }
+
+            // Carica lo stato: attivo se era attivo, o di default se non c'è stato salvato
+            scriptAttivo = (storedState === 'true') || (storedState === null);
+            if (storedState === null && scriptAttivo) {
+                saveScriptState(); // Salva lo stato attivo di default
+            }
         }
-        customLog('Stato script caricato:', scriptAttivo);
+        customLog('Stato script finale caricato:', scriptAttivo);
         updateStopButtonText();
+        updateCountdownUI(); // Aggiorna UI countdown in base allo stato finale
     }
 
     function saveScriptState() {
         localStorage.setItem(storageKeyScriptActive, scriptAttivo);
-        customLog('Stato script salvato:', scriptAttivo);
+        // Non loggare qui per evitare messaggi ripetuti dal countdown
+        // customLog('Stato script salvato:', scriptAttivo);
     }
 
     // --- GESTIONE DELLO STORAGE PER IL CONTATORE RICARICAMENTI ---
@@ -143,22 +191,55 @@
         scriptAttivo = false;
         customLog('Script fermato.');
         displayNotification('Script fermato.');
+
+        if (activationTimeoutId) {
+            clearTimeout(activationTimeoutId);
+            activationTimeoutId = null;
+            customLog("Timer di attivazione cancellato.");
+        }
+        if (countdownIntervalId) {
+            clearInterval(countdownIntervalId);
+            countdownIntervalId = null;
+            customLog("Timer countdown cancellato.");
+        }
+
         updateStopButtonText();
-        saveScriptState();
-        resetReloadCount(); // Azzera il contatore ricaricamenti
+        saveScriptState(); // Salva lo stato inattivo
+        resetReloadCount();
+        updateCountdownUI(); // Aggiorna UI countdown (mostrerà "Attesa annullata")
     }
 
     function startScript() {
+        // const msUntilActivation = activationTime - Date.now(); // Non serve più bloccare qui
+        // if (!isNaN(activationTime) && msUntilActivation > 0) { // Rimosso blocco
+        //      customLog("Tentativo di avvio manuale prima dell'ora di attivazione. Attendere.");
+        //      displayNotification(`Attendere attivazione automatica tra ${formatMilliseconds(msUntilActivation)}`);
+        //      return; // Non avviare manualmente
+        // }
+
         scriptAttivo = true;
-        customLog('Script riavviato dall\'utente.');
-        displayNotification('Script riavviato.');
+        customLog('Script (ri)avviato dall\'utente.');
+
+        // Se i timer erano attivi, cancellali (attivazione manuale anticipata)
+        if (activationTimeoutId) {
+            clearTimeout(activationTimeoutId);
+            activationTimeoutId = null;
+            customLog("Attivazione manuale: Timer di attivazione programmata cancellato.");
+        }
+        if (countdownIntervalId) {
+            clearInterval(countdownIntervalId);
+            countdownIntervalId = null;
+            customLog("Attivazione manuale: Timer countdown cancellato.");
+        }
+
+        displayNotification('Script avviato.');
         updateStopButtonText();
-        saveScriptState();
+        saveScriptState(); // Salva lo stato attivo
         clearLogs();
         resetReloadCount();
-        // Resetta anche lo stato di successo invio
         localStorage.removeItem(storageKeyScriptSubmitSuccess);
-        updateSubmitStatusUI(); // Aggiorna UI dello stato invio
+        updateSubmitStatusUI();
+        updateCountdownUI(); // Aggiorna UI countdown (mostrerà "Attivato manualmente" se prima dell'ora)
         handleInitialLoad();
     }
 
@@ -398,13 +479,78 @@
         }
     }
 
+    // --- FUNZIONE AGGIORNAMENTO CONTATORE UI ---
+    function updateReloadCounterUI() {
+        if (reloadCounterSpan) {
+            reloadCounterSpan.textContent = `Tentativi: ${reloadCount}/${maxReloads}`;
+        }
+    }
+
+    // --- FUNZIONI ATTIVAZIONE PROGRAMMATA ---
+    function activateScriptNow() {
+        customLog("+++ ATTIVAZIONE AUTOMATICA +++");
+        scriptAttivo = true;
+        saveScriptState();
+        activationTimeoutId = null; // Resetta ID timeout
+        if (countdownIntervalId) {
+            clearInterval(countdownIntervalId);
+            countdownIntervalId = null;
+            if (countdownSpan) countdownSpan.textContent = "Attivo!"; // Aggiorna UI countdown
+        }
+        displayNotification("Script attivato automaticamente!");
+        updateStopButtonText();
+        handleInitialLoad(); // Avvia la logica principale
+    }
+
+    function formatMilliseconds(ms) {
+        if (ms <= 0) return "0s";
+        let seconds = Math.floor(ms / 1000);
+        let minutes = Math.floor(seconds / 60);
+        let hours = Math.floor(minutes / 60);
+
+        seconds = seconds % 60;
+        minutes = minutes % 60;
+
+        const pad = (num) => String(num).padStart(2, '0');
+        return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    }
+
+    function updateCountdownUI() {
+        if (countdownSpan) {
+            const msRemaining = activationTime - Date.now();
+
+            if (scriptAttivo && msRemaining > 0) {
+                // Attivato manualmente prima dell'ora
+                countdownSpan.textContent = "Attivato manualmente";
+                if (countdownIntervalId) {
+                    clearInterval(countdownIntervalId);
+                    countdownIntervalId = null;
+                }
+            } else if (msRemaining <= 0 && activationTime && !isNaN(activationTime)) {
+                // Ora di attivazione passata (o non valida ma abbiamo provato a leggerla)
+                countdownSpan.textContent = "Ora attivazione passata";
+                if (countdownIntervalId) {
+                    clearInterval(countdownIntervalId);
+                    countdownIntervalId = null;
+                }
+            } else if (msRemaining > 0 && countdownIntervalId) {
+                // Countdown attivo
+                countdownSpan.textContent = `Attiva tra: ${formatMilliseconds(msRemaining)}`;
+            } else if (msRemaining > 0 && !countdownIntervalId && !scriptAttivo) {
+                // Timer cancellato ma non ancora attivato (es. dopo stopScript)
+                countdownSpan.textContent = "Attesa annullata.";
+            } else {
+                // Caso di default o data non valida
+                countdownSpan.textContent = "";
+            }
+        }
+    }
+
     // --- CREAZIONE INTERFACCIA UTENTE ---
     function createUI() {
         if (document.getElementById('fesr-automation-ui')) {
-            // Evita di ricreare la UI se esiste già
             return;
         }
-
         if (document.body) {
             uiContainer = document.createElement('div');
             uiContainer.id = 'fesr-automation-ui'; // Aggiunto ID per controllo esistenza
@@ -446,11 +592,12 @@
             details.appendChild(logDiv);
             uiContainer.appendChild(details);
 
-            // 3. Controlli in basso (Bottone e Contatore)
+            // 3. Controlli in basso (Bottone e Contatore Tentativi)
             const controlsDiv = document.createElement('div');
             controlsDiv.style.display = 'flex';
             controlsDiv.style.justifyContent = 'space-between';
             controlsDiv.style.alignItems = 'center';
+            controlsDiv.style.marginBottom = '5px'; // Spazio prima stato invio
 
             const stopButton = document.createElement('button');
             stopButton.id = 'stop-script-btn';
@@ -471,17 +618,24 @@
             reloadCounterSpan.style.marginLeft = '10px'; // Spazio dal bottone
             // Testo impostato da updateReloadCounterUI
             controlsDiv.appendChild(reloadCounterSpan);
-
             uiContainer.appendChild(controlsDiv);
 
-            // 4. Area Stato Invio (sotto i controlli)
+            // 4. Area Stato Invio
             submitStatusDiv = document.createElement('div');
             submitStatusDiv.id = 'submit-status-div';
-            submitStatusDiv.style.marginTop = '8px';
             submitStatusDiv.style.paddingTop = '5px';
             submitStatusDiv.style.borderTop = '1px solid #ccc';
+            submitStatusDiv.style.marginBottom = '5px'; // Spazio prima del countdown
             // Testo impostato da updateSubmitStatusUI
             uiContainer.appendChild(submitStatusDiv);
+
+            // 5. Area Countdown (sotto stato invio)
+            countdownSpan = document.createElement('span');
+            countdownSpan.id = 'countdown-span';
+            countdownSpan.style.fontSize = '0.9em';
+            countdownSpan.style.color = '#666'; // Grigio, poco invasivo
+            // Testo impostato da updateCountdownUI (se necessario)
+            uiContainer.appendChild(countdownSpan);
 
             document.body.appendChild(uiContainer);
 
@@ -489,17 +643,11 @@
             displayLogsInUI();
             updateStopButtonText();
             updateReloadCounterUI();
-            updateSubmitStatusUI(); // Chiamata iniziale per lo stato invio
+            updateSubmitStatusUI();
+            updateCountdownUI(); // Aggiorna countdown all'inizio
 
         } else {
             document.addEventListener('DOMContentLoaded', createUI);
-        }
-    }
-
-    // --- FUNZIONE AGGIORNAMENTO CONTATORE UI ---
-    function updateReloadCounterUI() {
-        if (reloadCounterSpan) {
-            reloadCounterSpan.textContent = `Tentativi: ${reloadCount}/${maxReloads}`;
         }
     }
 
@@ -519,32 +667,35 @@
     }
 
     // --- AVVIO SCRIPT ---
-    // Controlla subito lo stato di successo PRIMA di caricare altro,
-    // perché se l'invio è riuscito, lo script deve fermarsi.
+    // Controllo successo invio PRIMA di tutto
     if (checkSubmitSuccess()) {
-        // Se checkSubmitSuccess ritorna true, significa che ha rilevato il successo
-        // e ha già chiamato stopScript(). Possiamo fermare l'esecuzione qui.
         customLog("Rilevato successo invio all'avvio, script fermato.");
-        // Aggiorna comunque la UI creandola se necessario
         if (!document.getElementById('fesr-automation-ui')) {
-            createUI();
+            createUI(); // Crea UI per mostrare lo stato
         }
-        // Assicurati che lo stato UI sia aggiornato
-        loadScriptState();
-        loadReloadCount();
-        loadLogs();
+        loadScriptState(); // Carica stato per UI
+        loadReloadCount(); // Carica conteggio per UI
+        loadLogs(); // Carica log per UI
         displayLogsInUI();
         updateStopButtonText();
         updateReloadCounterUI();
         updateSubmitStatusUI();
-        return; // Interrompe l'esecuzione dello script
+        updateCountdownUI(); // Aggiorna anche countdown se necessario
+        return;
     }
 
-    // Se non è stato rilevato successo, procedi con il caricamento normale
+    // Se non successo, carica stato (che gestirà attivazione/countdown)
     loadScriptState();
     loadReloadCount();
     loadLogs();
     createUI();
-    setTimeout(handleInitialLoad, 500);
+
+    // Avvia handleInitialLoad solo se lo script è già attivo ORA
+    // Se siamo prima dell'attivazione, handleInitialLoad verrà chiamato da activateScriptNow
+    if (scriptAttivo) {
+        setTimeout(handleInitialLoad, 500);
+    } else {
+        customLog("Script in attesa dell'attivazione programmata...");
+    }
 
 })();
