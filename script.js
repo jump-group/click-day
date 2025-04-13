@@ -12,6 +12,8 @@
 (function () {
     'use strict';
 
+    const fiscalCode = '04026360364'; // Codice Fiscale da cercare nella selezione soggetto
+
     // --- CONFIGURAZIONE INIZIALE ---
     const requestId = '46317'; // ID della richiesta (costante modificabile)
     let searchText = 'Invia domanda'; // Testo del bottone da cercare (modificabile)
@@ -21,8 +23,8 @@
     const storageKeyScriptLogs = 'fesrAutomationLogs';     // Rinominata
     const storageKeyScriptReloadCount = 'fesrAutomationReloadCount'; // Rinominata
     const storageKeyScriptCfUrlMap = 'fesrAutomationCfUrlMap';   // Rinominata
+    const storageKeyScriptSubmitSuccess = 'fesrSubmitSuccess'; // Chiave per stato invio successo
     const maxReloads = 5; // Numero massimo di ricaricamenti consentiti (Rinominata)
-    const fiscalCode = '04026360364'; // Codice Fiscale da cercare nella selezione soggetto
     const subjectSelectionUrl = 'https://servizifederati.regione.emilia-romagna.it/fesr2020/selezione_soggetto/richieste_elenco';
 
     let scriptAttivo = true;
@@ -32,6 +34,7 @@
     let logDiv;
     let logs = [];
     let reloadCounterSpan; // Aggiunta per riferimento allo span del contatore
+    let submitStatusDiv; // Aggiunta per riferimento div stato invio
 
     // --- GESTIONE DELLO STORAGE PER LO STATO ATTIVO ---
     function loadScriptState() {
@@ -153,6 +156,9 @@
         saveScriptState();
         clearLogs();
         resetReloadCount();
+        // Resetta anche lo stato di successo invio
+        localStorage.removeItem(storageKeyScriptSubmitSuccess);
+        updateSubmitStatusUI(); // Aggiorna UI dello stato invio
         handleInitialLoad();
     }
 
@@ -210,6 +216,9 @@
             const targetUrl = foundButton.getAttribute('href');
             customLog('Bottone trovato. Navigo a:', targetUrl);
             resetReloadCount();
+            // Imposta il flag di tentativo invio prima di navigare
+            sessionStorage.setItem('fesrSubmitAttempt', 'true');
+            customLog('Flag fesrSubmitAttempt impostato.');
             navigateTo(targetUrl);
             // Ferma lo script dopo aver iniziato la navigazione finale
             stopScript();
@@ -358,6 +367,37 @@
         customLog('--- Fine handleInitialLoad ---');
     }
 
+    // --- GESTIONE STATO INVIO SUCCESSO ---
+    function checkSubmitSuccess() {
+        const submitAttempt = sessionStorage.getItem('fesrSubmitAttempt');
+        const currentUrlLower = window.location.href.toLowerCase();
+        const targetDetailPageUrlLower = targetDetailPageUrl.toLowerCase();
+
+        if (submitAttempt === 'true') {
+            sessionStorage.removeItem('fesrSubmitAttempt'); // Rimuovi sempre il flag di tentativo
+            customLog('Flag fesrSubmitAttempt rilevato e rimosso.');
+            if (currentUrlLower === targetDetailPageUrlLower) {
+                customLog('INVIO CON SUCCESSO RILEVATO: Reindirizzamento alla pagina dettaglio dopo tentativo invio.');
+                localStorage.setItem(storageKeyScriptSubmitSuccess, 'true');
+                updateSubmitStatusUI(); // Aggiorna subito la UI
+                stopScript(); // Ferma definitivamente lo script
+                return true; // Indica che lo script deve fermarsi
+            } else {
+                customLog('Tentativo invio rilevato, ma non reindirizzato alla pagina dettaglio. URL:', currentUrlLower);
+            }
+        }
+        return false; // Indica che lo script può continuare (se attivo)
+    }
+
+    function updateSubmitStatusUI() {
+        if (submitStatusDiv) {
+            const success = localStorage.getItem(storageKeyScriptSubmitSuccess) === 'true';
+            submitStatusDiv.textContent = success ? 'Invio effettuato ✅' : 'Stato invio: -';
+            submitStatusDiv.style.color = success ? 'green' : 'black';
+            submitStatusDiv.style.fontWeight = success ? 'bold' : 'normal';
+        }
+    }
+
     // --- CREAZIONE INTERFACCIA UTENTE ---
     function createUI() {
         if (document.getElementById('fesr-automation-ui')) {
@@ -434,12 +474,22 @@
 
             uiContainer.appendChild(controlsDiv);
 
+            // 4. Area Stato Invio (sotto i controlli)
+            submitStatusDiv = document.createElement('div');
+            submitStatusDiv.id = 'submit-status-div';
+            submitStatusDiv.style.marginTop = '8px';
+            submitStatusDiv.style.paddingTop = '5px';
+            submitStatusDiv.style.borderTop = '1px solid #ccc';
+            // Testo impostato da updateSubmitStatusUI
+            uiContainer.appendChild(submitStatusDiv);
+
             document.body.appendChild(uiContainer);
 
             // Aggiorna UI iniziale
             displayLogsInUI();
             updateStopButtonText();
-            updateReloadCounterUI(); // Chiamata iniziale per il contatore
+            updateReloadCounterUI();
+            updateSubmitStatusUI(); // Chiamata iniziale per lo stato invio
 
         } else {
             document.addEventListener('DOMContentLoaded', createUI);
@@ -469,8 +519,30 @@
     }
 
     // --- AVVIO SCRIPT ---
+    // Controlla subito lo stato di successo PRIMA di caricare altro,
+    // perché se l'invio è riuscito, lo script deve fermarsi.
+    if (checkSubmitSuccess()) {
+        // Se checkSubmitSuccess ritorna true, significa che ha rilevato il successo
+        // e ha già chiamato stopScript(). Possiamo fermare l'esecuzione qui.
+        customLog("Rilevato successo invio all'avvio, script fermato.");
+        // Aggiorna comunque la UI creandola se necessario
+        if (!document.getElementById('fesr-automation-ui')) {
+            createUI();
+        }
+        // Assicurati che lo stato UI sia aggiornato
+        loadScriptState();
+        loadReloadCount();
+        loadLogs();
+        displayLogsInUI();
+        updateStopButtonText();
+        updateReloadCounterUI();
+        updateSubmitStatusUI();
+        return; // Interrompe l'esecuzione dello script
+    }
+
+    // Se non è stato rilevato successo, procedi con il caricamento normale
     loadScriptState();
-    loadReloadCount(); // Carica il contatore prima di creare UI
+    loadReloadCount();
     loadLogs();
     createUI();
     setTimeout(handleInitialLoad, 500);
