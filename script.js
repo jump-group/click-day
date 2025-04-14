@@ -29,7 +29,7 @@
     const storageKeyFiscalCode = 'fesrFiscalCode'; // Nuova chiave
     const storageKeyRequestId = 'fesrRequestId';   // Nuova chiave
     // Altre costanti
-    const maxReloads = 5;
+    const maxReloads = 500;
     const SELEZIONE_SOGGETTO_URL = 'https://servizifederati.regione.emilia-romagna.it/fesr2020/selezione_soggetto/richieste_elenco';
     const activationDateTimeString = "2025-04-15T09:59:59.900";
 
