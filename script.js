@@ -633,10 +633,22 @@
             sessionStorage.removeItem('fesrSubmitAttempt');
             customLog('Flag fesrSubmitAttempt rilevato. Controllo risultato invio...');
 
-            const successAlert = document.querySelector('div.alert.alert-success');
+            const wizardNav = document.querySelector('ul.nav.nav-pills.nav-wizard');
+
+            let successAlert = false;
+
+            if (wizardNav) {
+                const wizardSteps = wizardNav.querySelectorAll('li');
+                for (const step of wizardSteps) {
+                    if (step.textContent.includes('Inviata') && step.classList.contains('active')) {
+                        successAlert = true;
+                        break;
+                    }
+                }
+            }
 
             if (successAlert) {
-                // Successo confermato
+                // Successo confermato  
                 customLog('INVIO CON SUCCESSO CONFERMATO: Trovato div.alert.alert-success.');
                 localStorage.setItem(storageKeyScriptSubmitSuccess, 'true');
                 resetReloadCount();
