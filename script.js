@@ -6,7 +6,7 @@
 // @author       Tu
 // @match        https://servizifederati.regione.emilia-Romagna.it/fesr2020/*
 // @grant        none
-// @run-at       document-end
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -39,6 +39,11 @@
     let countdownIntervalId = null;
     let activationTime = new Date(activationDateTimeString).getTime();
 
+    // Mutation Observer
+    let domReadyForAction = false;
+    let pendingMutationCallbacks = [];
+    let domObserver = null;
+
     // Elementi UI
     let uiContainer;
     let notificationDiv;
@@ -52,6 +57,79 @@
     let modalBackdrop = null; // Riferimento allo sfondo modale
     let fiscalCodeInput = null; // Riferimento input CF
     let requestIdInput = null; // Riferimento input Request ID
+
+    // --- OBSERVER PER RILEVARE ELEMENTI DOM ---
+    function setupDomObserver() {
+        // Configura l'observer con le opzioni
+        const config = {
+            childList: true,
+            subtree: true
+        };
+
+        // Crea una funzione di callback
+        const callback = function (mutationsList, observer) {
+            if (!scriptAttivo) return;
+
+            // Processa le callback in attesa
+            if (pendingMutationCallbacks.length > 0 && document.body) {
+                const callbacksToProcess = [...pendingMutationCallbacks];
+                pendingMutationCallbacks = [];
+
+                for (const cb of callbacksToProcess) {
+                    try {
+                        cb();
+                    } catch (e) {
+                        customLog("Errore in mutation callback:", e);
+                    }
+                }
+            }
+        };
+
+        // Crea un'istanza dell'observer con la funzione di callback
+        domObserver = new MutationObserver(callback);
+
+        // Avvia l'osservazione del documento target con le opzioni configurate
+        domObserver.observe(document, config);
+        customLog("DOM Observer impostato");
+    }
+
+    // Funzione per eseguire azioni appena il DOM è pronto
+    function executeWhenDomReady(callback) {
+        if (document.body) {
+            callback();
+        } else {
+            pendingMutationCallbacks.push(callback);
+        }
+    }
+
+    // Funzione migliorata per controllare e cliccare bottoni appena disponibili
+    function checkButtonsWithObserver() {
+        if (!scriptAttivo) return;
+        customLog("checkButtonsWithObserver: In attesa del bottone con testo:", searchText);
+
+        // Aggiungi una callback che verrà eseguita ad ogni mutazione DOM
+        pendingMutationCallbacks.push(() => {
+            const buttons = document.querySelectorAll('a.btn');
+            let foundButton = null;
+
+            for (const button of buttons) {
+                const buttonText = button.textContent.trim();
+                if (buttonText === searchText || buttonText.startsWith(searchText.substring(0, searchText.indexOf(' ') > 0 ? searchText.indexOf(' ') : searchText.length))) {
+                    foundButton = button;
+                    break;
+                }
+            }
+
+            if (foundButton) {
+                const targetUrl = foundButton.getAttribute('href');
+                customLog('Bottone trovato immediatamente con observer. Navigo a:', targetUrl);
+                sessionStorage.setItem('fesrSubmitAttempt', 'true');
+                navigateTo(targetUrl);
+            }
+            // Non incrementiamo il contatore qui, lasciamo che handleInitialLoad faccia la sua parte standard
+            // se il bottone non viene trovato direttamente dall'observer
+        });
+    }
 
     // --- GESTIONE STORAGE CONFIGURAZIONE (CF / RequestID) ---
     function loadConfigValues() {
@@ -421,7 +499,6 @@
     }
 
     // --- LOGICA PRINCIPALE DI NAVIGAZIONE E AZIONI ---
-
     function checkAndNavigateButton() {
         if (!scriptAttivo) {
             customLog("checkAndNavigateButton: Script non attivo, esco.");
@@ -442,7 +519,7 @@
 
         if (foundButton) {
             const targetUrl = foundButton.getAttribute('href');
-            customLog('Bottone trovato. Navigo a:', targetUrl);
+            customLog('Bottone trovato con controllo standard. Navigo a:', targetUrl);
             // Non resettare contatore qui, permette al loop incerto di contare
             sessionStorage.setItem('fesrSubmitAttempt', 'true');
             customLog('Flag fesrSubmitAttempt impostato.');
@@ -608,6 +685,9 @@
         if (currentUrlLower.startsWith(baseUrlLower)) {
             if (currentUrlLower === targetDetailPageUrlLower) {
                 customLog('Nella pagina di dettaglio corretta. Cerco il bottone...');
+                // Attiva il controllo con mutation observer 
+                checkButtonsWithObserver();
+                // Esegui anche il controllo standard come backup
                 checkAndNavigateButton();
             } else if (currentUrlLower === selezioneSoggettoUrlLower) {
                 customLog('Nella pagina di Selezione Soggetto. Processo la tabella...');
@@ -1058,58 +1138,77 @@
     }
 
     // --- AVVIO SCRIPT ---
-    // 1. Carica Config
-    loadConfigValues();
+    // Funzione di inizializzazione
+    function init() {
+        customLog("Avvio inizializzazione script (document-start)");
 
-    // 2. Crea UI (elementi nascosti/visibili in base alla config)
-    createUI();
+        // 0. Preparare l'observer subito
+        setupDomObserver();
 
-    // 3. Carica lo stato dello script (attivo/in attesa, imposta timer countdown se necessario)
-    loadScriptState();
+        // 1. Carica Config
+        loadConfigValues();
 
-    // 4. Determina validità config
-    const isConfigReady = !!requestId;
+        // 2. Crea UI immediatamente
+        executeWhenDomReady(createUI);
 
-    // 5. Imposta visibilità UI in base alla config
-    updateUIVisibility(isConfigReady);
+        // Ascolta l'evento DOMContentLoaded per eseguire il resto
+        document.addEventListener('DOMContentLoaded', function () {
+            customLog("DOM fully loaded, completamento inizializzazione");
 
-    // 6. Aggiorna testo info config e testo countdown (ora viene fatto anche se config non pronta)
-    updateConfigInfoUI();
-    updateCountdownUI();
+            // 3. Carica lo stato dello script
+            loadScriptState();
 
-    // 7. Se la config non è pronta, ferma qui (ma timer e config sono visibili)
-    if (!isConfigReady) {
-        customLog("Script in attesa di configurazione (ID Richiesta).");
-        return;
+            // 4. Determina validità config
+            const isConfigReady = !!requestId;
+
+            // 5. Imposta visibilità UI
+            updateUIVisibility(isConfigReady);
+
+            // 6. Aggiorna testo info e countdown
+            updateConfigInfoUI();
+            updateCountdownUI();
+
+            // 7. Se config non pronta, ferma qui
+            if (!isConfigReady) {
+                customLog("Script in attesa di configurazione (ID Richiesta).");
+                return;
+            }
+
+            // Continua con il resto dell'inizializzazione
+            customLog("Configurazione pronta, avvio caricamento stati...");
+
+            // 8. Carica altri stati
+            loadReloadCount();
+            loadLogs();
+
+            // 9. Aggiorna resto UI
+            displayLogsInUI();
+            updateStopButtonText();
+            updateReloadCounterUI();
+            updateSubmitStatusUI();
+
+            // 10. Controlla risultato invio precedente
+            if (checkSubmitSuccess()) {
+                customLog("Rilevato successo invio confermato all'avvio. Script terminato.");
+                return;
+            }
+
+            // 11. Esegui logica principale
+            domReadyForAction = true;
+            if (scriptAttivo) {
+                customLog("Script attivo, avvio handleInitialLoad...");
+                // Usa un piccolo ritardo per dare tempo a tutti gli elementi di finire di caricare
+                setTimeout(handleInitialLoad, 200);
+            }
+        });
+
+        // Non aspettare DOMContentLoaded per la pagina dettaglio, imposta l'observer subito
+        if (window.location.href.toLowerCase() === targetDetailPageUrl?.toLowerCase()) {
+            checkButtonsWithObserver();
+        }
     }
 
-    // --- Procedi solo se la configurazione è pronta ---
-    customLog("Configurazione pronta, avvio caricamento stati...");
-
-    // 8. Carica altri stati
-    loadReloadCount();
-    loadLogs();
-
-    // 9. Aggiorna resto della UI
-    displayLogsInUI();
-    updateStopButtonText();
-    updateReloadCounterUI();
-    updateSubmitStatusUI();
-
-    // 10. Controlla risultato invio precedente
-    if (checkSubmitSuccess()) {
-        customLog("Rilevato successo invio confermato all'avvio. Script terminato.");
-        return;
-    } else {
-        customLog("Controllo successo invio completato, nessun successo confermato rilevato.");
-    }
-
-    // 11. Esegui logica principale se attivo
-    if (scriptAttivo) {
-        customLog("Script attivo, avvio handleInitialLoad...");
-        setTimeout(handleInitialLoad, 500);
-    } else {
-        customLog("Script non attivo (in attesa di attivazione o fermato manualmente).");
-    }
+    // Avvia lo script immediatamente
+    init();
 
 })();
