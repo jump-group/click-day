@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Automazione FESR Emilia-Romagna
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  Automatizza alcune operazioni sul portale FESR, inclusa selezione soggetto e attivazione programmata
 // @author       Tu
 // @match        https://servizifederati.regione.emilia-Romagna.it/fesr2020/*
