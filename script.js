@@ -13,21 +13,25 @@
     'use strict';
 
     // --- CONFIGURAZIONE INIZIALE ---
-    // const fiscalCode = '02700011204';
-    // const requestId = '46530';
-    const fiscalCode = '04026360364'; // Codice Fiscale da cercare nella selezione soggetto
-    const requestId = '46317'; // ID della richiesta (costante modificabile)
-    let searchText = 'Invia domanda'; // Testo del bottone da cercare (modificabile)
-    const targetDetailPageUrl = `https://servizifederati.regione.emilia-Romagna.it/fesr2020/richieste/common/${requestId}/dettaglio`;
+    // Valori iniziali nulli, verranno caricati o richiesti all'utente
+    let fiscalCode = ''; // Default a vuoto
+    let requestId = ''; // Default a vuoto, obbligatorio per partire
+    let targetDetailPageUrl = null;
+
+    let searchText = 'Invia domanda';
     const baseUrl = 'https://servizifederati.regione.emilia-Romagna.it/fesr2020/';
+    // Chiavi localStorage
     const storageKeyScriptActive = 'fesrAutomationActive';
     const storageKeyScriptLogs = 'fesrAutomationLogs';
     const storageKeyScriptReloadCount = 'fesrAutomationReloadCount';
     const storageKeyScriptCfUrlMap = 'fesrAutomationCfUrlMap';
     const storageKeyScriptSubmitSuccess = 'fesrSubmitSuccess';
-    const maxReloads = 5; // Numero massimo di ricaricamenti consentiti
+    const storageKeyFiscalCode = 'fesrFiscalCode'; // Nuova chiave
+    const storageKeyRequestId = 'fesrRequestId';   // Nuova chiave
+    // Altre costanti
+    const maxReloads = 5;
     const SELEZIONE_SOGGETTO_URL = 'https://servizifederati.regione.emilia-romagna.it/fesr2020/selezione_soggetto/richieste_elenco';
-    const activationDateTimeString = "2025-04-15T09:59:59.900"; // Data/ora attivazione (Formato ISO 8601)
+    const activationDateTimeString = "2025-04-15T09:59:59.900";
 
     let scriptAttivo = true;
     let reloadCount = 0;
@@ -43,6 +47,83 @@
     let reloadCounterSpan;
     let submitStatusDiv;
     let countdownSpan;
+    let configInfoDiv = null; // Riferimento al div info config
+    let editModal = null; // Riferimento alla modale
+    let modalBackdrop = null; // Riferimento allo sfondo modale
+    let fiscalCodeInput = null; // Riferimento input CF
+    let requestIdInput = null; // Riferimento input Request ID
+
+    // --- GESTIONE STORAGE CONFIGURAZIONE (CF / RequestID) ---
+    function loadConfigValues() {
+        const savedFiscalCode = localStorage.getItem(storageKeyFiscalCode);
+        const savedRequestId = localStorage.getItem(storageKeyRequestId);
+
+        // Carica CF (può essere vuoto)
+        fiscalCode = savedFiscalCode !== null ? savedFiscalCode : '';
+        // Carica Request ID (obbligatorio per l'avvio)
+        requestId = savedRequestId !== null ? savedRequestId : '';
+
+        customLog(`Valori caricati: CF=${fiscalCode || 'Nessuno'}, Richiesta=${requestId || 'Nessuna'}`);
+
+        if (requestId) {
+            updateTargetUrl();
+        } else {
+            targetDetailPageUrl = null; // Nessun URL target senza ID
+        }
+        // updateConfigInfoUI(); // Aggiornamento UI spostato dopo createUI
+    }
+
+    function saveConfigValues(newFiscalCode, newRequestId) {
+        fiscalCode = newFiscalCode;
+        requestId = newRequestId;
+        localStorage.setItem(storageKeyFiscalCode, fiscalCode);
+        localStorage.setItem(storageKeyRequestId, requestId);
+        customLog(`Configurazione salvata: CF=${fiscalCode || 'Nessuno'}, Richiesta=${requestId}`);
+
+        // Aggiorna l'URL target e l'info visualizzata subito
+        if (requestId) {
+            updateTargetUrl();
+        } else {
+            targetDetailPageUrl = null; // Rimuovi URL se ID non c'è
+        }
+        updateConfigInfoUI(); // Aggiorna CF | Richiesta nella UI
+
+        // Verifica se la configurazione è ora valida
+        const nowConfigReady = !!requestId;
+
+        // Aggiorna la visibilità dell'intera UI
+        updateUIVisibility(nowConfigReady);
+
+        // Se la configurazione è diventata valida, resetta stati e avvia logica se script attivo
+        if (nowConfigReady) {
+            customLog("Configurazione valida salvata. Resetto stati e controllo se avviare.");
+            resetReloadCount(); // Azzera tentativi
+            localStorage.removeItem(storageKeyScriptSubmitSuccess); // Pulisci stato successo
+            updateSubmitStatusUI(); // Aggiorna UI stato invio
+
+            // Se lo script è attivo, avvia (o riavvia) la logica principale
+            if (scriptAttivo) {
+                customLog("Script attivo, avvio handleInitialLoad con nuova configurazione...");
+                // Usa un piccolo timeout per dare tempo al DOM di aggiornarsi se necessario
+                setTimeout(handleInitialLoad, 100);
+            } else {
+                customLog("Script non attivo, nessuna azione automatica avviata dopo salvataggio config.");
+            }
+        } else {
+            // Se la configurazione NON è valida (ID Richiesta rimosso)
+            customLog("Configurazione non valida salvata (manca ID Richiesta). Script in attesa.");
+            // Assicurati che eventuali timer attivi vengano fermati se lo script non può procedere
+            // (updateUIVisibility già nasconde i controlli, ma per sicurezza potremmo voler fermare processi)
+            // stopScript(); // Potrebbe essere troppo aggressivo, l'utente potrebbe voler solo correggere
+        }
+
+        // RIMOSSO: window.location.reload(); // Non ricaricare la pagina
+    }
+
+    function updateTargetUrl() {
+        targetDetailPageUrl = `${baseUrl}richieste/common/${requestId}/dettaglio`;
+        customLog(`URL Pagina Dettaglio aggiornato: ${targetDetailPageUrl}`);
+    }
 
     // --- GESTIONE DELLO STORAGE PER LO STATO ATTIVO ---
     function loadScriptState() {
@@ -143,7 +224,7 @@
                     countdownIntervalId = null;
                 }
             } else if (msRemaining > 0 && countdownIntervalId) {
-                countdownSpan.textContent = `Attiva tra: ${formatMilliseconds(msRemaining)}`;
+                countdownSpan.textContent = `Attiva automaticamente tra: ${formatMilliseconds(msRemaining)}`;
             } else if (msRemaining > 0 && !countdownIntervalId && !scriptAttivo) {
                 countdownSpan.textContent = "Attesa annullata.";
             } else {
@@ -238,6 +319,27 @@
 
     // --- FUNZIONI UTILI ---
 
+    function toggleScript() {
+        if (scriptAttivo) {
+            stopScript();
+        } else {
+            startScript();
+        }
+    }
+
+    function toggleLogsVisibility() {
+        if (!logDiv) return;
+        const logVisible = logDiv.style.display !== 'none';
+        logDiv.style.display = logVisible ? 'none' : 'block';
+        const toggleLink = document.getElementById('fesr-toggle-log-link');
+        if (toggleLink) {
+            toggleLink.textContent = logVisible ? 'Mostra Log' : 'Nascondi Log';
+        }
+        if (!logVisible) {
+            logDiv.scrollTop = logDiv.scrollHeight; // Scroll to bottom when showing
+        }
+    }
+
     function stopScript() {
         scriptAttivo = false;
         customLog('Script fermato.');
@@ -289,9 +391,9 @@
     }
 
     function updateStopButtonText() {
-        const stopButton = document.getElementById('stop-script-btn');
-        if (stopButton) {
-            stopButton.textContent = scriptAttivo ? 'Ferma Script' : 'Avvia Script';
+        const startButton = document.getElementById('fesr-start-button'); // Usa ID corretto
+        if (startButton) {
+            startButton.textContent = scriptAttivo ? 'Disattiva Script' : 'Attiva Script'; // Testo corretto
         }
     }
 
@@ -363,6 +465,13 @@
     }
 
     function startSelezioneSoggettoFlow() {
+        // Verifica se il fiscalCode è impostato prima di procedere con questo flusso
+        if (!fiscalCode) {
+            customLog("Codice Fiscale non impostato. Impossibile avviare flusso selezione soggetto. Tento accesso diretto a pagina dettaglio.");
+            navigateTo(targetDetailPageUrl);
+            return;
+        }
+
         customLog("Redirect inaspettato rilevato. Avvio flusso alternativo: Selezione Soggetto.");
         const cfUrlMap = getCfUrlMap();
         const savedUrl = cfUrlMap[fiscalCode];
@@ -377,6 +486,13 @@
     }
 
     function processSelezioneSoggettoPage() {
+        // Verifica se il fiscalCode è impostato
+        if (!fiscalCode) {
+            customLog("Codice Fiscale non impostato. Impossibile processare pagina selezione soggetto. Fermo script.");
+            stopScript();
+            return;
+        }
+
         customLog(`Sono sulla pagina Selezione Soggetto (${SELEZIONE_SOGGETTO_URL}). Cerco CF: ${fiscalCode}`);
         const tableRows = document.querySelectorAll('#notizie-elenco tbody tr');
         let foundRow = false;
@@ -449,8 +565,13 @@
                 const dangerAlert = document.querySelector('div.alert.alert-danger');
                 if (dangerAlert && dangerAlert.textContent.trim().includes('Soggetto non valido')) {
                     // Alert specifico trovato -> Avvia flusso selezione soggetto
-                    customLog("Trovato alert 'Soggetto non valido'. Avvio flusso alternativo: Selezione Soggetto.");
-                    startSelezioneSoggettoFlow();
+                    if (fiscalCode) {
+                        customLog("Trovato alert 'Soggetto non valido'. Avvio flusso alternativo: Selezione Soggetto.");
+                        startSelezioneSoggettoFlow();
+                    } else {
+                        customLog("Trovato alert 'Soggetto non valido' ma CF non impostato. Script fermato.");
+                        stopScript();
+                    }
                 } else {
                     // Redirect alla base URL, MA senza l'alert specifico
                     // Consideralo un fallimento nel raggiungere la pagina dettaglio e ritenta.
@@ -605,72 +726,307 @@
             notificationDiv.id = 'tm-notification';
             notificationDiv.style.marginBottom = '5px';
             notificationDiv.style.fontWeight = 'bold';
+            notificationDiv.style.color = 'red';
             uiContainer.appendChild(notificationDiv);
 
-            // Accordion Log
-            const details = document.createElement('details');
-            const summary = document.createElement('summary');
-            summary.textContent = 'Log Script';
-            summary.style.cursor = 'pointer';
-            summary.style.marginBottom = '5px';
-            details.appendChild(summary);
+            // Info Configurazione + Link Modifica
+            const configContainer = document.createElement('div');
+            configContainer.id = 'fesr-config-container';
+            configContainer.style.marginBottom = '8px';
+            configContainer.style.paddingTop = '5px';
+            configContainer.style.borderTop = '1px solid #eee';
 
-            logDiv = document.createElement('div');
-            logDiv.id = 'tm-logs';
-            logDiv.style.fontSize = '0.9em';
-            logDiv.style.maxHeight = '150px';
-            logDiv.style.overflowY = 'auto';
-            logDiv.style.backgroundColor = '#fff';
-            logDiv.style.border = '1px solid #eee';
-            logDiv.style.padding = '5px';
-            logDiv.style.marginBottom = '10px';
-            details.appendChild(logDiv);
-            uiContainer.appendChild(details);
+            configInfoDiv = document.createElement('div');
+            configInfoDiv.style.fontSize = '0.9em';
+            configInfoDiv.style.color = '#333';
+            configInfoDiv.style.marginBottom = '3px';
+            configContainer.appendChild(configInfoDiv);
 
-            // Controlli in basso
-            const controlsDiv = document.createElement('div');
-            controlsDiv.style.display = 'flex';
-            controlsDiv.style.justifyContent = 'space-between';
-            controlsDiv.style.alignItems = 'center';
-            controlsDiv.style.marginBottom = '5px';
-
-            const stopButton = document.createElement('button');
-            stopButton.id = 'stop-script-btn';
-            stopButton.style.padding = '3px 8px';
-            stopButton.style.fontSize = '11px';
-            stopButton.addEventListener('click', () => {
-                if (scriptAttivo) {
-                    stopScript();
-                } else {
-                    startScript();
-                }
+            const editLink = document.createElement('a');
+            editLink.textContent = 'Modifica';
+            editLink.href = '#';
+            editLink.style.fontSize = '10px';
+            editLink.style.marginLeft = '5px';
+            editLink.style.color = 'blue';
+            editLink.style.textDecoration = 'underline';
+            editLink.style.cursor = 'pointer';
+            editLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                showEditModal();
             });
-            controlsDiv.appendChild(stopButton);
+            configContainer.appendChild(editLink);
+            uiContainer.appendChild(configContainer);
 
+            // Creazione Div Controlli Principali (pulsante Avvia/Ferma, tentativi)
+            const controlsDiv = document.createElement('div');
+            controlsDiv.id = 'fesr-controls-div';
+            controlsDiv.style.marginBottom = '10px';
+
+            // Pulsante Avvia/Ferma
+            const startButton = document.createElement('button');
+            startButton.id = 'fesr-start-button';
+            startButton.textContent = scriptAttivo ? 'Disattiva Script' : 'Attiva Script';
+            startButton.onclick = toggleScript;
+            controlsDiv.appendChild(startButton);
+
+            // Contatore Tentativi Reload
             reloadCounterSpan = document.createElement('span');
-            reloadCounterSpan.id = 'reload-counter-span';
-            reloadCounterSpan.style.marginLeft = '10px';
+            reloadCounterSpan.id = 'fesr-reload-counter';
+            reloadCounterSpan.style.marginLeft = '15px';
+            updateReloadCounterUI(); // Imposta testo iniziale
             controlsDiv.appendChild(reloadCounterSpan);
-            uiContainer.appendChild(controlsDiv);
 
-            // Area Stato Invio
+            uiContainer.appendChild(controlsDiv); // Aggiungi div controlli
+
+            // Creazione Countdown Timer (spostato qui, sotto i controlli)
+            countdownSpan = document.createElement('div'); // Usiamo div per metterlo su nuova riga
+            countdownSpan.id = 'fesr-countdown';
+            countdownSpan.style.marginTop = '10px'; // Margine sopra
+            updateCountdownUI(); // Imposta testo iniziale
+            uiContainer.appendChild(countdownSpan); // Aggiungi timer sotto i controlli
+
+            // Creazione Div Stato Invio
             submitStatusDiv = document.createElement('div');
-            submitStatusDiv.id = 'submit-status-div';
-            submitStatusDiv.style.paddingTop = '5px';
-            submitStatusDiv.style.borderTop = '1px solid #ccc';
-            submitStatusDiv.style.marginBottom = '5px';
+            submitStatusDiv.id = 'fesr-submit-status-div';
+            submitStatusDiv.style.marginTop = '10px';
+            updateSubmitStatusUI();
             uiContainer.appendChild(submitStatusDiv);
 
-            // Area Countdown
-            countdownSpan = document.createElement('span');
-            countdownSpan.id = 'countdown-span';
-            countdownSpan.style.fontSize = '0.9em';
-            countdownSpan.style.color = '#666';
-            uiContainer.appendChild(countdownSpan);
+            // Link Mostra/Nascondi Log
+            const toggleLogLink = document.createElement('a');
+            toggleLogLink.id = 'fesr-toggle-log-link';
+            toggleLogLink.href = '#';
+            toggleLogLink.textContent = 'Mostra Log';
+            toggleLogLink.style.display = 'block'; // Inizia visibile (ma il log è nascosto)
+            toggleLogLink.style.marginTop = '10px';
+            toggleLogLink.onclick = (e) => {
+                e.preventDefault();
+                toggleLogsVisibility();
+            };
+            uiContainer.appendChild(toggleLogLink);
+
+            // Area Log (inizia nascosta)
+            logDiv = document.createElement('div');
+            logDiv.id = 'tm-logs'; // Usa ID specifico per stile/selezione
+            logDiv.style.maxHeight = '200px';
+            logDiv.style.overflowY = 'auto';
+            logDiv.style.border = '1px solid #ccc';
+            logDiv.style.padding = '5px';
+            logDiv.style.marginTop = '5px';
+            logDiv.style.display = 'none'; // *** LOG CHIUSO DI DEFAULT ***
+            uiContainer.appendChild(logDiv);
 
             document.body.appendChild(uiContainer);
+            createEditModal();
         } else {
             document.addEventListener('DOMContentLoaded', createUI);
+        }
+    }
+
+    // Aggiorna la visualizzazione CF | Richiesta nella UI
+    function updateConfigInfoUI() {
+        if (configInfoDiv) {
+            configInfoDiv.textContent = `Richiesta: ${requestId || 'N/D'} | CF: ${fiscalCode || 'N/D'}`;
+        }
+    }
+
+    // --- GESTIONE VISIBILITÀ UI --- 
+    function updateUIVisibility(isConfigReady) {
+        const fullUIElements = [
+            document.getElementById('fesr-controls-div'),
+            document.getElementById('fesr-submit-status-div'),
+            document.getElementById('fesr-toggle-log-link'),
+            // *** RIMOSSO logDiv da qui ***
+        ];
+        const configContainer = document.getElementById('fesr-config-container');
+
+        if (isConfigReady) {
+            customLog("Configurazione valida, mostro UI completa.");
+            if (notificationDiv) {
+                notificationDiv.innerHTML = ''; // Pulisci completamente
+                notificationDiv.style.color = 'black'; // Ripristina colore default
+                notificationDiv.style.fontWeight = 'normal';
+                notificationDiv.style.cursor = 'default';
+                notificationDiv.onclick = null; // Rimuovi eventuale listener precedente
+            }
+            fullUIElements.forEach(el => { if (el) el.style.display = ''; });
+            if (configContainer) configContainer.style.display = '';
+            // La visibilità del logDiv NON viene toccata qui, dipende solo dal toggle
+            if (document.getElementById('fesr-toggle-log-link')) {
+                document.getElementById('fesr-toggle-log-link').style.display = 'block'; // Mostra il link per aprirlo
+            }
+        } else {
+            customLog("Configurazione non valida (manca ID Richiesta), mostro UI minimale.");
+            if (notificationDiv) {
+                notificationDiv.innerHTML = 'Inserisci Id richiesta per continuare. '; // Usa innerHTML per aggiungere link
+                const clickHereLink = document.createElement('a');
+                clickHereLink.textContent = 'Clicca qui.';
+                clickHereLink.href = '#';
+                clickHereLink.style.color = 'blue';
+                clickHereLink.style.textDecoration = 'underline';
+                clickHereLink.style.cursor = 'pointer';
+                clickHereLink.onclick = (e) => {
+                    e.preventDefault();
+                    showEditModal();
+                };
+                notificationDiv.appendChild(clickHereLink);
+                notificationDiv.style.color = 'black'; // Colore meno allarmante
+                notificationDiv.style.fontWeight = 'normal';
+                notificationDiv.style.cursor = 'default'; // Non rendere tutto il div cliccabile
+            }
+            // Nascondi elementi UI completa
+            fullUIElements.forEach(el => { if (el) el.style.display = 'none'; });
+            // Nascondi anche il link del log quando la config non è pronta
+            const toggleLogLink = document.getElementById('fesr-toggle-log-link');
+            if (toggleLogLink) toggleLogLink.style.display = 'none';
+            // Nascondi container info config
+            if (configContainer) configContainer.style.display = 'none';
+            // Il countdownSpan rimane visibile
+        }
+    }
+
+    // --- GESTIONE MODALE EDIT --- 
+    function createEditModal() {
+        // Stili (iniettati per semplicità)
+        const styles = `
+            #fesr-modal-backdrop {
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background-color: rgba(0,0,0,0.5); z-index: 10001;
+                display: none; /* Nascosto di default */
+                justify-content: center; align-items: center;
+            }
+            #fesr-edit-modal {
+                background-color: #fefefe; padding: 20px; border: 1px solid #888;
+                border-radius: 5px; width: 80%; max-width: 400px;
+            }
+            #fesr-edit-modal label {
+                display: block; margin-bottom: 5px; font-weight: bold;
+            }
+            #fesr-edit-modal input[type=text] {
+                width: calc(100% - 12px); padding: 5px; margin-bottom: 10px;
+                border: 1px solid #ccc; border-radius: 3px;
+            }
+            #fesr-edit-modal button {
+                padding: 6px 12px; margin-top: 10px; border-radius: 3px;
+                cursor: pointer; border: 1px solid #ccc;
+            }
+            #fesr-edit-modal button.save {
+                background-color: #4CAF50; color: white; border-color: #4CAF50;
+                margin-right: 5px;
+            }
+            #fesr-edit-modal button.cancel {
+                background-color: #f44336; color: white; border-color: #f44336;
+            }
+        `;
+        const styleSheet = document.createElement("style");
+        styleSheet.textContent = styles;
+        document.head.appendChild(styleSheet);
+
+        // Struttura HTML
+        modalBackdrop = document.createElement('div');
+        modalBackdrop.id = 'fesr-modal-backdrop';
+        modalBackdrop.style.position = 'fixed';
+        modalBackdrop.style.top = '0'; modalBackdrop.style.left = '0'; modalBackdrop.style.width = '100%'; modalBackdrop.style.height = '100%';
+        modalBackdrop.style.backgroundColor = 'rgba(0,0,0,0.5)'; modalBackdrop.style.zIndex = '10001';
+        modalBackdrop.style.display = 'none';
+        modalBackdrop.style.justifyContent = 'center'; modalBackdrop.style.alignItems = 'center';
+
+        editModal = document.createElement('div');
+        editModal.id = 'fesr-edit-modal';
+        editModal.style.backgroundColor = '#fefefe'; editModal.style.padding = '20px'; editModal.style.border = '1px solid #888';
+        editModal.style.borderRadius = '5px'; editModal.style.width = '80%'; editModal.style.maxWidth = '400px';
+
+        const title = document.createElement('h3');
+        title.textContent = 'Modifica Configurazione';
+        editModal.appendChild(title);
+
+        // *** SPOSTATO QUI: Campo ID Richiesta (prima del CF) ***
+        const labelReqId = document.createElement('label');
+        labelReqId.htmlFor = 'fesr-modal-reqid';
+        labelReqId.textContent = 'ID Richiesta: '; // Rimosso "(Obbligatorio)"
+        labelReqId.style.display = 'block';
+        editModal.appendChild(labelReqId);
+
+        requestIdInput = document.createElement('input');
+        requestIdInput.type = 'text';
+        requestIdInput.id = 'fesr-modal-reqid';
+        requestIdInput.value = requestId || '';
+        requestIdInput.style.display = 'block';
+        requestIdInput.style.width = '90%';
+        editModal.appendChild(requestIdInput);
+
+        const reqHelpText = document.createElement('p');
+        reqHelpText.textContent = "ID numerico della richiesta specifica (visibile in 'Presentazioni' > 'Elenco richieste' > tabella 'Elenco richieste'. Certe volte è necessario selezionare prima il soggetto).";
+        reqHelpText.style.fontSize = '0.85em';
+        reqHelpText.style.color = '#666';
+        reqHelpText.style.marginTop = '-5px';
+        reqHelpText.style.marginBottom = '10px';
+        editModal.appendChild(reqHelpText);
+
+        // *** Campo Codice Fiscale (ora dopo ID Richiesta) ***
+        const cfLabel = document.createElement('label');
+        cfLabel.textContent = 'Codice Fiscale (Opzionale):';
+        cfLabel.htmlFor = 'fesr-cf-input';
+        cfLabel.style.marginTop = '15px'; // Aggiunto spazio sopra
+        fiscalCodeInput = document.createElement('input');
+        fiscalCodeInput.type = 'text';
+        fiscalCodeInput.id = 'fesr-cf-input';
+        fiscalCodeInput.value = fiscalCode;
+        editModal.appendChild(cfLabel);
+        editModal.appendChild(fiscalCodeInput);
+
+        const cfHelpText = document.createElement('p');
+        cfHelpText.textContent = "Codice Fiscale del soggetto desiderato (visibile in 'Presentazioni' > 'Elenco richieste' > tabella 'Soggetti'). Lascia vuoto se non vedi la tabella soggetti.";
+        cfHelpText.style.fontSize = '0.85em';
+        cfHelpText.style.color = '#666';
+        cfHelpText.style.marginTop = '-5px';
+        cfHelpText.style.marginBottom = '10px';
+        editModal.appendChild(cfHelpText);
+
+        // Pulsante Salva
+        const saveButton = document.createElement('button');
+        saveButton.textContent = 'Salva';
+        saveButton.style.marginTop = '15px';
+        saveButton.onclick = () => {
+            const newCf = fiscalCodeInput.value.trim();
+            const newReqId = requestIdInput.value.trim();
+
+            // *** RIMOSSO CONTROLLO if (newReqId) ***
+            // Ora salva sempre, anche se l'ID Richiesta è vuoto
+            saveConfigValues(newCf, newReqId);
+            hideEditModal();
+            // Non serve più l'alert
+            // else {
+            //    alert('L\'ID Richiesta è obbligatorio.');
+            // }
+        };
+        editModal.appendChild(saveButton);
+
+        const cancelButton = document.createElement('button');
+        cancelButton.textContent = 'Annulla';
+        cancelButton.className = 'cancel';
+        cancelButton.style.padding = '6px 12px'; cancelButton.style.marginTop = '10px'; cancelButton.style.borderRadius = '3px';
+        cancelButton.style.cursor = 'pointer'; cancelButton.style.border = '1px solid #ccc';
+        cancelButton.style.backgroundColor = '#f44336'; cancelButton.style.color = 'white'; cancelButton.style.borderColor = '#f44336';
+
+        cancelButton.addEventListener('click', hideEditModal);
+        editModal.appendChild(cancelButton);
+
+        modalBackdrop.appendChild(editModal);
+        document.body.appendChild(modalBackdrop);
+    }
+
+    function showEditModal() {
+        if (modalBackdrop && fiscalCodeInput && requestIdInput) {
+            fiscalCodeInput.value = fiscalCode;
+            requestIdInput.value = requestId;
+            modalBackdrop.style.display = 'flex';
+        }
+    }
+
+    function hideEditModal() {
+        if (modalBackdrop) {
+            modalBackdrop.style.display = 'none';
         }
     }
 
@@ -690,33 +1046,53 @@
     }
 
     // --- AVVIO SCRIPT ---
+    // 1. Carica Config
+    loadConfigValues();
 
-    // 1. Carica stati
+    // 2. Crea UI (elementi nascosti/visibili in base alla config)
+    createUI();
+
+    // 3. Carica lo stato dello script (attivo/in attesa, imposta timer countdown se necessario)
     loadScriptState();
+
+    // 4. Determina validità config
+    const isConfigReady = !!requestId;
+
+    // 5. Imposta visibilità UI in base alla config
+    updateUIVisibility(isConfigReady);
+
+    // 6. Aggiorna testo info config e testo countdown (ora viene fatto anche se config non pronta)
+    updateConfigInfoUI();
+    updateCountdownUI();
+
+    // 7. Se la config non è pronta, ferma qui (ma timer e config sono visibili)
+    if (!isConfigReady) {
+        customLog("Script in attesa di configurazione (ID Richiesta).");
+        return;
+    }
+
+    // --- Procedi solo se la configurazione è pronta ---
+    customLog("Configurazione pronta, avvio caricamento stati...");
+
+    // 8. Carica altri stati
     loadReloadCount();
     loadLogs();
 
-    // 2. Crea UI
-    createUI();
-
-    // 3. Aggiorna UI
+    // 9. Aggiorna resto della UI
     displayLogsInUI();
     updateStopButtonText();
     updateReloadCounterUI();
     updateSubmitStatusUI();
-    updateCountdownUI();
 
-    // 4. Controlla risultato invio precedente (se c'è stato)
+    // 10. Controlla risultato invio precedente
     if (checkSubmitSuccess()) {
-        // Successo confermato: script fermato, esci
         customLog("Rilevato successo invio confermato all'avvio. Script terminato.");
         return;
     } else {
-        // Nessun successo confermato (o invio incerto)
         customLog("Controllo successo invio completato, nessun successo confermato rilevato.");
     }
 
-    // 5. Esegui logica principale se attivo
+    // 11. Esegui logica principale se attivo
     if (scriptAttivo) {
         customLog("Script attivo, avvio handleInitialLoad...");
         setTimeout(handleInitialLoad, 500);
