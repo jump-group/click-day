@@ -40,9 +40,16 @@ Una volta installato, lo script si attiverà automaticamente quando navighi sul 
 
 ## Configurazione
 
-Puoi modificare alcune impostazioni dello script direttamente all'interno del codice:
+La configurazione della pratica si effettua **dall'interfaccia utente**, non modificando il codice. Dal pannello flottante in basso a sinistra clicca su **"Modifica"** (oppure sul link "Clicca qui" se non hai ancora inserito l'ID) e compila la modale:
 
-    * ** `requestId = '46317';` **: Questa variabile definisce l'ID della richiesta per la quale lo script deve cercare il bottone "Invia domanda". Modifica `'46317'` con l'ID della richiesta desiderata.
+    * ** ID Richiesta(obbligatorio):** ID numerico della richiesta specifica, visibile in `Presentazioni` > `Elenco richieste` > tabella `Elenco richieste`. È diverso per ogni cliente/pratica. A volte è necessario selezionare prima il soggetto.
+    * ** Codice Fiscale(opzionale):** Codice Fiscale del soggetto desiderato, visibile in `Presentazioni` > `Elenco richieste` > tabella `Soggetti`. Lascialo vuoto se non vedi la tabella soggetti. Serve allo script per selezionare automaticamente il soggetto corretto in caso di redirect.
+
+I valori inseriti vengono salvati nel browser(localStorage) e persistono tra le sessioni.
+
+Altre impostazioni modificabili solo all'interno del codice:
+
+    * ** `activationDateTimeString` **: Data e ora di attivazione automatica dello script(formato ISO, es. `"2026-06-23T09:59:59.900"`). Allo scadere di questo orario lo script si attiva da solo e inizia a cercare il bottone "Invia domanda". Va aggiornata ad ogni nuovo click day.
 * ** `searchText = 'Invia domanda';` **: Questa variabile contiene il testo esatto(o l'inizio del testo) del bottone che lo script deve cercare. Puoi modificarla se il testo del bottone dovesse cambiare (ad esempio, per test iniziali potrebbe essere impostata a `'Invalida'`).
 
 ## Controlli UI
