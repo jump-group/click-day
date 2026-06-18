@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Automazione FESR Emilia-Romagna
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Automatizza alcune operazioni sul portale FESR, inclusa selezione soggetto e attivazione programmata
 // @author       Tu
 // @match        https://servizifederati.regione.emilia-Romagna.it/fesr2020/*
@@ -799,7 +799,10 @@
         if (document.getElementById('fesr-automation-ui')) {
             return;
         }
-        if (document.body) {
+        // Monta su body se disponibile, altrimenti su documentElement (<html>),
+        // così il pannello appare subito anche a document-start (prima del body).
+        const mountPoint = document.body || document.documentElement;
+        if (mountPoint) {
             uiContainer = document.createElement('div');
             uiContainer.id = 'fesr-automation-ui';
             uiContainer.style.position = 'fixed';
@@ -908,9 +911,12 @@
             logDiv.style.display = 'none'; // *** LOG CHIUSO DI DEFAULT ***
             uiContainer.appendChild(logDiv);
 
-            document.body.appendChild(uiContainer);
+            mountPoint.appendChild(uiContainer);
             createEditModal();
         } else {
+            // Nemmeno <html> è ancora disponibile: riprova a brevissimo (senza
+            // attendere il DOMContentLoaded, che su pagine lente arriva tardi).
+            setTimeout(createUI, 20);
             document.addEventListener('DOMContentLoaded', createUI);
         }
     }
@@ -1012,7 +1018,7 @@
         `;
         const styleSheet = document.createElement("style");
         styleSheet.textContent = styles;
-        document.head.appendChild(styleSheet);
+        (document.head || document.documentElement).appendChild(styleSheet);
 
         // Struttura HTML
         modalBackdrop = document.createElement('div');
@@ -1105,7 +1111,7 @@
         editModal.appendChild(cancelButton);
 
         modalBackdrop.appendChild(editModal);
-        document.body.appendChild(modalBackdrop);
+        (document.body || document.documentElement).appendChild(modalBackdrop);
     }
 
     function showEditModal() {
@@ -1148,8 +1154,8 @@
         // 1. Carica Config
         loadConfigValues();
 
-        // 2. Crea UI immediatamente
-        executeWhenDomReady(createUI);
+        // 2. Crea UI immediatamente (montata su <html> se il body non c'è ancora)
+        createUI();
 
         // Ascolta l'evento DOMContentLoaded per eseguire il resto
         document.addEventListener('DOMContentLoaded', function () {
